@@ -7,14 +7,16 @@ import {
   TouchableOpacity,
   Animated,
   Dimensions,
+  Alert,
 } from "react-native";
+import { Swipeable } from "react-native-gesture-handler";
 import { Ionicons } from "@expo/vector-icons";
 import { useNotes } from "../context/NotesContext";
 import { Note, ViewMode, ACCENT_COLORS } from "../types";
 import * as Haptics from "expo-haptics";
 
 const { width } = Dimensions.get("window");
-const GRID_CARD_WIDTH = (width - 24 - 8) / 2; // 2 cols, padding 12 each side, gap 8
+const GRID_CARD_WIDTH = (width - 24 - 8) / 2;
 
 type Props = {
   note: Note;
@@ -26,6 +28,7 @@ type Props = {
 export function NoteCard({ note, viewMode, index, onPress }: Props) {
   const { togglePin, toggleFavorite, deleteNote } = useNotes();
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  const swipeableRef = useRef<Swipeable>(null);
   const accentColor = ACCENT_COLORS[note.color];
 
   const onPressIn = () => {
@@ -46,8 +49,116 @@ export function NoteCard({ note, viewMode, index, onPress }: Props) {
     }).start();
   };
 
-  const handleLongPress = () => {
+  const handleDelete = () => {
+    swipeableRef.current?.close();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    Alert.alert(
+      "Eliminar nota",
+      `¿Eliminar "${note.title}"? Esta acción no se puede deshacer.`,
+      [
+        {
+          text: "Cancelar",
+          style: "cancel",
+          onPress: () => swipeableRef.current?.close(),
+        },
+        {
+          text: "Eliminar",
+          style: "destructive",
+          onPress: () => deleteNote(note.id),
+        },
+      ]
+    );
+  };
+
+  const handleSwipeOpen = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  // Acción derecha — eliminar
+  const renderRightActions = (
+    progress: Animated.AnimatedInterpolation<number>,
+    dragX: Animated.AnimatedInterpolation<number>
+  ) => {
+    const scale = progress.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.5, 1],
+      extrapolate: "clamp",
+    });
+    const opacity = progress.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0, 0.5, 1],
+      extrapolate: "clamp",
+    });
+
+    return (
+      <Animated.View
+        style={[
+          styles.deleteAction,
+          viewMode === "grid" && styles.deleteActionGrid,
+          { opacity },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.deleteBtn}
+          onPress={handleDelete}
+          activeOpacity={0.8}
+        >
+          <Animated.View style={{ transform: [{ scale }] }}>
+            <Ionicons name="trash" size={22} color="#FFFFFF" />
+          </Animated.View>
+          <Animated.Text style={[styles.deleteText, { transform: [{ scale }] }]}>
+            Eliminar
+          </Animated.Text>
+        </TouchableOpacity>
+      </Animated.View>
+    );
+  };
+
+  // Acción izquierda — fijar
+  const renderLeftActions = (
+    progress: Animated.AnimatedInterpolation<number>
+  ) => {
+    const scale = progress.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0.5, 1],
+      extrapolate: "clamp",
+    });
+    const opacity = progress.interpolate({
+      inputRange: [0, 0.5, 1],
+      outputRange: [0, 0.5, 1],
+      extrapolate: "clamp",
+    });
+
+    return (
+      <Animated.View
+        style={[
+          styles.pinAction,
+          viewMode === "grid" && styles.pinActionGrid,
+          { opacity },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.pinBtn}
+          onPress={() => {
+            Haptics.selectionAsync();
+            togglePin(note.id);
+            swipeableRef.current?.close();
+          }}
+          activeOpacity={0.8}
+        >
+          <Animated.View style={{ transform: [{ scale }] }}>
+            <Ionicons
+              name={note.isPinned ? "pin-outline" : "pin"}
+              size={22}
+              color="#FFFFFF"
+            />
+          </Animated.View>
+          <Animated.Text style={[styles.pinText, { transform: [{ scale }] }]}>
+            {note.isPinned ? "Desfijar" : "Fijar"}
+          </Animated.Text>
+        </TouchableOpacity>
+      </Animated.View>
+    );
   };
 
   const formatDate = (iso: string) => {
@@ -65,155 +176,221 @@ export function NoteCard({ note, viewMode, index, onPress }: Props) {
     return d.toLocaleDateString("es-MX", { day: "numeric", month: "short" });
   };
 
-  const previewText = note.content.length > 0
-    ? note.content.replace(/\n+/g, " ").trim()
-    : null;
+  const previewText =
+    note.content.length > 0
+      ? note.content.replace(/\n+/g, " ").trim()
+      : null;
 
   if (viewMode === "list") {
     return (
-      <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-        <TouchableOpacity
-          style={[styles.listCard, { backgroundColor: note.color }]}
-          onPress={onPress}
-          onPressIn={onPressIn}
-          onPressOut={onPressOut}
-          onLongPress={handleLongPress}
-          activeOpacity={1}
-        >
-          {/* Left accent bar */}
-          <View style={[styles.listAccentBar, { backgroundColor: accentColor }]} />
-
-          <View style={styles.listContent}>
-            {/* Top row */}
-            <View style={styles.listTopRow}>
-              <Text style={styles.listTitle} numberOfLines={1}>
-                {note.title}
-              </Text>
-              <View style={styles.listMeta}>
-                {note.isPinned && (
-                  <Ionicons name="pin" size={13} color={accentColor} />
-                )}
-                {note.isFavorite && (
-                  <Ionicons name="heart" size={13} color="#EE4540" />
-                )}
-                <Text style={styles.listDate}>{formatDate(note.updatedAt)}</Text>
+      <Swipeable
+        ref={swipeableRef}
+        renderRightActions={renderRightActions}
+        renderLeftActions={renderLeftActions}
+        onSwipeableOpen={handleSwipeOpen}
+        friction={2}
+        leftThreshold={60}
+        rightThreshold={60}
+        overshootLeft={false}
+        overshootRight={false}
+        containerStyle={styles.swipeContainer}
+      >
+        <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+          <TouchableOpacity
+            style={[styles.listCard, { backgroundColor: note.color }]}
+            onPress={onPress}
+            onPressIn={onPressIn}
+            onPressOut={onPressOut}
+            activeOpacity={1}
+          >
+            <View style={[styles.listAccentBar, { backgroundColor: accentColor }]} />
+            <View style={styles.listContent}>
+              <View style={styles.listTopRow}>
+                <Text style={styles.listTitle} numberOfLines={1}>
+                  {note.title}
+                </Text>
+                <View style={styles.listMeta}>
+                  {note.isPinned && (
+                    <Ionicons name="pin" size={13} color={accentColor} />
+                  )}
+                  {note.isFavorite && (
+                    <Ionicons name="heart" size={13} color="#EE4540" />
+                  )}
+                  <Text style={styles.listDate}>{formatDate(note.updatedAt)}</Text>
+                </View>
               </View>
-            </View>
-
-            {/* Preview */}
-            {previewText && (
-              <Text style={styles.listPreview} numberOfLines={2}>
-                {previewText}
-              </Text>
-            )}
-
-            {/* Tags */}
-            {note.tags.length > 0 && (
-              <View style={styles.tagsRow}>
-                {note.tags.slice(0, 3).map((tag) => (
-                  <View
-                    key={tag.id}
-                    style={[
-                      styles.tagBadge,
-                      {
-                        backgroundColor: tag.color + "22",
-                        borderColor: tag.color + "66",
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.tagText, { color: tag.color }]}>
-                      {tag.label}
+              {previewText && (
+                <Text style={styles.listPreview} numberOfLines={2}>
+                  {previewText}
+                </Text>
+              )}
+              {note.tags.length > 0 && (
+                <View style={styles.tagsRow}>
+                  {note.tags.slice(0, 3).map((tag) => (
+                    <View
+                      key={tag.id}
+                      style={[
+                        styles.tagBadge,
+                        {
+                          backgroundColor: tag.color + "22",
+                          borderColor: tag.color + "66",
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.tagText, { color: tag.color }]}>
+                        {tag.label}
+                      </Text>
+                    </View>
+                  ))}
+                  {note.tags.length > 3 && (
+                    <Text style={styles.moreTagsText}>
+                      +{note.tags.length - 3}
                     </Text>
-                  </View>
-                ))}
-                {note.tags.length > 3 && (
-                  <Text style={styles.moreTagsText}>+{note.tags.length - 3}</Text>
-                )}
-              </View>
-            )}
-          </View>
-        </TouchableOpacity>
-      </Animated.View>
+                  )}
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
+        </Animated.View>
+      </Swipeable>
     );
   }
 
-  // GRID MODE
+  // GRID MODE — swipe solo a la derecha para eliminar
   return (
-    <Animated.View
-      style={[
-        styles.gridWrapper,
-        { transform: [{ scale: scaleAnim }] },
+    <Swipeable
+      ref={swipeableRef}
+      renderRightActions={renderRightActions}
+      onSwipeableOpen={handleSwipeOpen}
+      friction={2}
+      rightThreshold={60}
+      overshootRight={false}
+      containerStyle={[
+        styles.gridSwipeContainer,
         index % 2 === 0 ? { marginRight: 4 } : { marginLeft: 4 },
       ]}
     >
-      <TouchableOpacity
-        style={[styles.gridCard, { backgroundColor: note.color }]}
-        onPress={onPress}
-        onPressIn={onPressIn}
-        onPressOut={onPressOut}
-        onLongPress={handleLongPress}
-        activeOpacity={1}
+      <Animated.View
+        style={[
+          styles.gridWrapper,
+          { transform: [{ scale: scaleAnim }] },
+        ]}
       >
-        {/* Top indicators */}
-        <View style={styles.gridTopRow}>
-          <View style={[styles.gridAccentDot, { backgroundColor: accentColor }]} />
-          <View style={styles.gridIcons}>
-            {note.isPinned && (
-              <Ionicons name="pin" size={13} color={accentColor} />
-            )}
-            {note.isFavorite && (
-              <Ionicons name="heart" size={12} color="#EE4540" />
-            )}
-          </View>
-        </View>
-
-        {/* Title */}
-        <Text style={styles.gridTitle} numberOfLines={2}>
-          {note.title}
-        </Text>
-
-        {/* Preview */}
-        {previewText && (
-          <Text style={styles.gridPreview} numberOfLines={3}>
-            {previewText}
-          </Text>
-        )}
-
-        {/* Spacer */}
-        <View style={{ flex: 1 }} />
-
-        {/* Bottom row */}
-        <View style={styles.gridBottomRow}>
-          {note.tags.length > 0 ? (
-            <View
-              style={[
-                styles.tagBadge,
-                {
-                  backgroundColor: note.tags[0].color + "22",
-                  borderColor: note.tags[0].color + "55",
-                },
-              ]}
-            >
-              <Text style={[styles.tagText, { color: note.tags[0].color }]}>
-                {note.tags[0].label}
-              </Text>
+        <TouchableOpacity
+          style={[styles.gridCard, { backgroundColor: note.color }]}
+          onPress={onPress}
+          onPressIn={onPressIn}
+          onPressOut={onPressOut}
+          activeOpacity={1}
+        >
+          <View style={styles.gridTopRow}>
+            <View style={[styles.gridAccentDot, { backgroundColor: accentColor }]} />
+            <View style={styles.gridIcons}>
+              {note.isPinned && (
+                <Ionicons name="pin" size={13} color={accentColor} />
+              )}
+              {note.isFavorite && (
+                <Ionicons name="heart" size={12} color="#EE4540" />
+              )}
             </View>
-          ) : (
-            <View />
+          </View>
+          <Text style={styles.gridTitle} numberOfLines={2}>
+            {note.title}
+          </Text>
+          {previewText && (
+            <Text style={styles.gridPreview} numberOfLines={3}>
+              {previewText}
+            </Text>
           )}
-          <Text style={styles.gridDate}>{formatDate(note.updatedAt)}</Text>
-        </View>
-      </TouchableOpacity>
-    </Animated.View>
+          <View style={{ flex: 1 }} />
+          <View style={styles.gridBottomRow}>
+            {note.tags.length > 0 ? (
+              <View
+                style={[
+                  styles.tagBadge,
+                  {
+                    backgroundColor: note.tags[0].color + "22",
+                    borderColor: note.tags[0].color + "55",
+                  },
+                ]}
+              >
+                <Text style={[styles.tagText, { color: note.tags[0].color }]}>
+                  {note.tags[0].label}
+                </Text>
+              </View>
+            ) : (
+              <View />
+            )}
+            <Text style={styles.gridDate}>{formatDate(note.updatedAt)}</Text>
+          </View>
+        </TouchableOpacity>
+      </Animated.View>
+    </Swipeable>
   );
 }
 
 const styles = StyleSheet.create({
+  // Swipe containers
+  swipeContainer: {
+    marginHorizontal: 12,
+    marginBottom: 8,
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+  gridSwipeContainer: {
+    width: GRID_CARD_WIDTH,
+    marginBottom: 8,
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+
+  // Delete action (derecha)
+  deleteAction: {
+    width: 90,
+    marginBottom: 0,
+    borderRadius: 0,
+    overflow: "hidden",
+  },
+  deleteActionGrid: {
+    width: 80,
+  },
+  deleteBtn: {
+    flex: 1,
+    backgroundColor: "#EE4540",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  deleteText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
+  // Pin action (izquierda)
+  pinAction: {
+    width: 90,
+    overflow: "hidden",
+  },
+  pinActionGrid: {
+    width: 80,
+  },
+  pinBtn: {
+    flex: 1,
+    backgroundColor: "#7C83FD",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  pinText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+
   // LIST styles
   listCard: {
     flexDirection: "row",
-    marginHorizontal: 12,
-    marginBottom: 8,
     borderRadius: 16,
     overflow: "hidden",
     minHeight: 72,
@@ -283,8 +460,7 @@ const styles = StyleSheet.create({
 
   // GRID styles
   gridWrapper: {
-    width: GRID_CARD_WIDTH,
-    marginBottom: 8,
+    flex: 1,
   },
   gridCard: {
     flex: 1,
