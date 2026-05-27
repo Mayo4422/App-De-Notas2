@@ -7,7 +7,7 @@ import React, {
   useCallback,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Note, NoteColor, NoteTag, SortOption, ViewMode } from "../types";
+import { Note, NoteColor, NoteImage, NoteTag, SortOption, ViewMode } from "../types";
 
 const STORAGE_KEY = "@notes_app_data";
 const SETTINGS_KEY = "@notes_app_settings";
@@ -48,10 +48,7 @@ function reducer(state: State, action: Action): State {
         ),
       };
     case "DELETE_NOTE":
-      return {
-        ...state,
-        notes: state.notes.filter((n) => n.id !== action.payload),
-      };
+      return { ...state, notes: state.notes.filter((n) => n.id !== action.payload) };
     case "TOGGLE_PIN":
       return {
         ...state,
@@ -95,7 +92,8 @@ type ContextType = State & {
     title: string,
     content: string,
     color: NoteColor,
-    tags: NoteTag[]
+    tags: NoteTag[],
+    images?: NoteImage[]
   ) => Promise<Note>;
   updateNote: (note: Note) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
@@ -113,7 +111,6 @@ const NotesContext = createContext<ContextType | null>(null);
 export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  // Load from AsyncStorage on mount
   useEffect(() => {
     (async () => {
       try {
@@ -121,8 +118,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           AsyncStorage.getItem(STORAGE_KEY),
           AsyncStorage.getItem(SETTINGS_KEY),
         ]);
-        if (raw) dispatch({ type: "LOAD_NOTES", payload: JSON.parse(raw) });
-        else dispatch({ type: "SET_LOADING", payload: false });
+        if (raw) {
+          const parsed: Note[] = JSON.parse(raw);
+          // Migrar notas viejas sin campo images
+          const migrated = parsed.map((n) => ({ images: [], ...n }));
+          dispatch({ type: "LOAD_NOTES", payload: migrated });
+        } else {
+          dispatch({ type: "SET_LOADING", payload: false });
+        }
         if (settings) {
           const s = JSON.parse(settings);
           if (s.viewMode) dispatch({ type: "SET_VIEW_MODE", payload: s.viewMode });
@@ -134,14 +137,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  // Persist notes on change
   useEffect(() => {
     if (!state.isLoading) {
       AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state.notes));
     }
   }, [state.notes, state.isLoading]);
 
-  // Persist settings on change
   useEffect(() => {
     AsyncStorage.setItem(
       SETTINGS_KEY,
@@ -154,7 +155,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       title: string,
       content: string,
       color: NoteColor,
-      tags: NoteTag[]
+      tags: NoteTag[],
+      images: NoteImage[] = []
     ): Promise<Note> => {
       const now = new Date().toISOString();
       const note: Note = {
@@ -163,6 +165,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         content,
         color,
         tags,
+        images,
         isPinned: false,
         isFavorite: false,
         createdAt: now,
@@ -209,10 +212,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: "SET_TAG_FILTER", payload: tag });
   }, []);
 
-  // Compute filtered + sorted notes
   const filteredNotes = React.useMemo(() => {
     let result = [...state.notes];
-
     if (state.searchQuery.trim()) {
       const q = state.searchQuery.toLowerCase();
       result = result.filter(
@@ -222,27 +223,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           n.tags.some((t) => t.label.toLowerCase().includes(q))
       );
     }
-
     if (state.activeTagFilter) {
       result = result.filter((n) =>
         n.tags.some((t) => t.id === state.activeTagFilter)
       );
     }
-
     result.sort((a, b) => {
       if (a.isPinned && !b.isPinned) return -1;
       if (!a.isPinned && b.isPinned) return 1;
       switch (state.sortBy) {
-        case "title":
-          return a.title.localeCompare(b.title);
-        case "createdAt":
-          return b.createdAt.localeCompare(a.createdAt);
-        case "updatedAt":
-        default:
-          return b.updatedAt.localeCompare(a.updatedAt);
+        case "title": return a.title.localeCompare(b.title);
+        case "createdAt": return b.createdAt.localeCompare(a.createdAt);
+        default: return b.updatedAt.localeCompare(a.updatedAt);
       }
     });
-
     return result;
   }, [state.notes, state.searchQuery, state.activeTagFilter, state.sortBy]);
 

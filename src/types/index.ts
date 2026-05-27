@@ -16,12 +16,20 @@ export type NoteTag = {
   color: string;
 };
 
+export type NoteImage = {
+  id: string;
+  uri: string;
+  width: number;
+  height: number;
+};
+
 export type Note = {
   id: string;
   title: string;
   content: string;
   color: NoteColor;
   tags: NoteTag[];
+  images: NoteImage[];
   isPinned: boolean;
   isFavorite: boolean;
   createdAt: string;
