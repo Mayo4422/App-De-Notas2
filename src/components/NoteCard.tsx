@@ -9,7 +9,7 @@ import {
   Dimensions,
   Alert,
 } from "react-native";
-import { Swipeable } from "react-native-gesture-handler";
+import { Swipeable, TapGestureHandler, State } from "react-native-gesture-handler";
 import { Ionicons } from "@expo/vector-icons";
 import { useNotes } from "../context/NotesContext";
 import { Note, ViewMode, ACCENT_COLORS } from "../types";
@@ -27,11 +27,56 @@ type Props = {
 };
 
 export function NoteCard({ note, viewMode, index, onPress }: Props) {
-  const { togglePin, deleteNote } = useNotes();
+  const { togglePin, toggleFavorite, deleteNote } = useNotes();
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  const heartAnim = useRef(new Animated.Value(0)).current;
+  const heartScaleAnim = useRef(new Animated.Value(0)).current;
   const swipeableRef = useRef<Swipeable>(null);
+  const doubleTapRef = useRef(null);
+  const singleTapRef = useRef(null);
   const [quickActionsVisible, setQuickActionsVisible] = useState(false);
+  const [showHeart, setShowHeart] = useState(false);
   const accentColor = ACCENT_COLORS[note.color];
+
+  // ── Animación del corazón flotante ──────────────────────────────
+  const triggerHeartAnimation = () => {
+    setShowHeart(true);
+    heartAnim.setValue(0);
+    heartScaleAnim.setValue(0);
+
+    Animated.parallel([
+      Animated.spring(heartScaleAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        speed: 20,
+        bounciness: 14,
+      }),
+      Animated.sequence([
+        Animated.delay(400),
+        Animated.timing(heartAnim, {
+          toValue: 1,
+          duration: 350,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start(() => setShowHeart(false));
+  };
+
+  // ── Double tap → favorito ───────────────────────────────────────
+  const handleDoubleTap = (event: any) => {
+    if (event.nativeEvent.state === State.ACTIVE) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      toggleFavorite(note.id);
+      triggerHeartAnimation();
+    }
+  };
+
+  // ── Single tap → abrir nota ─────────────────────────────────────
+  const handleSingleTap = (event: any) => {
+    if (event.nativeEvent.state === State.ACTIVE) {
+      onPress();
+    }
+  };
 
   const onPressIn = () => {
     Animated.spring(scaleAnim, {
@@ -53,7 +98,6 @@ export function NoteCard({ note, viewMode, index, onPress }: Props) {
 
   const handleLongPress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    // Pequeño bounce al activar
     Animated.sequence([
       Animated.spring(scaleAnim, {
         toValue: 0.92,
@@ -78,11 +122,7 @@ export function NoteCard({ note, viewMode, index, onPress }: Props) {
       `¿Eliminar "${note.title}"? Esta acción no se puede deshacer.`,
       [
         { text: "Cancelar", style: "cancel", onPress: () => swipeableRef.current?.close() },
-        {
-          text: "Eliminar",
-          style: "destructive",
-          onPress: () => deleteNote(note.id),
-        },
+        { text: "Eliminar", style: "destructive", onPress: () => deleteNote(note.id) },
       ]
     );
   };
@@ -91,65 +131,35 @@ export function NoteCard({ note, viewMode, index, onPress }: Props) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
-  const renderRightActions = (
-    progress: Animated.AnimatedInterpolation<number>
-  ) => {
-    const scale = progress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0.5, 1],
-      extrapolate: "clamp",
-    });
-    const opacity = progress.interpolate({
-      inputRange: [0, 0.5, 1],
-      outputRange: [0, 0.5, 1],
-      extrapolate: "clamp",
-    });
+  const renderRightActions = (progress: Animated.AnimatedInterpolation<number>) => {
+    const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1], extrapolate: "clamp" });
+    const opacity = progress.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0.5, 1], extrapolate: "clamp" });
     return (
       <Animated.View style={[styles.deleteAction, { opacity }]}>
         <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete} activeOpacity={0.8}>
           <Animated.View style={{ transform: [{ scale }] }}>
             <Ionicons name="trash" size={22} color="#FFFFFF" />
           </Animated.View>
-          <Animated.Text style={[styles.deleteText, { transform: [{ scale }] }]}>
-            Eliminar
-          </Animated.Text>
+          <Animated.Text style={[styles.actionBtnText, { transform: [{ scale }] }]}>Eliminar</Animated.Text>
         </TouchableOpacity>
       </Animated.View>
     );
   };
 
-  const renderLeftActions = (
-    progress: Animated.AnimatedInterpolation<number>
-  ) => {
-    const scale = progress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0.5, 1],
-      extrapolate: "clamp",
-    });
-    const opacity = progress.interpolate({
-      inputRange: [0, 0.5, 1],
-      outputRange: [0, 0.5, 1],
-      extrapolate: "clamp",
-    });
+  const renderLeftActions = (progress: Animated.AnimatedInterpolation<number>) => {
+    const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1], extrapolate: "clamp" });
+    const opacity = progress.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0.5, 1], extrapolate: "clamp" });
     return (
       <Animated.View style={[styles.pinAction, { opacity }]}>
         <TouchableOpacity
           style={styles.pinBtn}
-          onPress={() => {
-            Haptics.selectionAsync();
-            togglePin(note.id);
-            swipeableRef.current?.close();
-          }}
+          onPress={() => { Haptics.selectionAsync(); togglePin(note.id); swipeableRef.current?.close(); }}
           activeOpacity={0.8}
         >
           <Animated.View style={{ transform: [{ scale }] }}>
-            <Ionicons
-              name={note.isPinned ? "pin-outline" : "pin"}
-              size={22}
-              color="#FFFFFF"
-            />
+            <Ionicons name={note.isPinned ? "pin-outline" : "pin"} size={22} color="#FFFFFF" />
           </Animated.View>
-          <Animated.Text style={[styles.pinText, { transform: [{ scale }] }]}>
+          <Animated.Text style={[styles.actionBtnText, { transform: [{ scale }] }]}>
             {note.isPinned ? "Desfijar" : "Fijar"}
           </Animated.Text>
         </TouchableOpacity>
@@ -171,10 +181,122 @@ export function NoteCard({ note, viewMode, index, onPress }: Props) {
     return d.toLocaleDateString("es-MX", { day: "numeric", month: "short" });
   };
 
-  const previewText =
-    note.content.length > 0 ? note.content.replace(/\n+/g, " ").trim() : null;
+  const previewText = note.content.length > 0
+    ? note.content.replace(/\n+/g, " ").trim()
+    : null;
 
-  const cardContent = (
+  // ── Corazón flotante animado ────────────────────────────────────
+  const heartOpacity = heartAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1, 0] });
+  const heartTranslateY = heartAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -30] });
+
+  const floatingHeart = showHeart ? (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.floatingHeart,
+        {
+          opacity: heartOpacity,
+          transform: [
+            { scale: heartScaleAnim },
+            { translateY: heartTranslateY },
+          ],
+        },
+      ]}
+    >
+      <Ionicons name="heart" size={48} color="#EE4540" />
+    </Animated.View>
+  ) : null;
+
+  // ── Card interior con gestos ────────────────────────────────────
+  const renderCardInner = (children: React.ReactNode) => (
+    <TapGestureHandler
+      ref={doubleTapRef}
+      onHandlerStateChange={handleDoubleTap}
+      numberOfTaps={2}
+    >
+      <TapGestureHandler
+        ref={singleTapRef}
+        onHandlerStateChange={handleSingleTap}
+        numberOfTaps={1}
+        waitFor={doubleTapRef}
+      >
+        <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+          {children}
+          {floatingHeart}
+        </Animated.View>
+      </TapGestureHandler>
+    </TapGestureHandler>
+  );
+
+  // ── LIST card ───────────────────────────────────────────────────
+  const listCard = renderCardInner(
+    <TouchableOpacity
+      style={[styles.listCard, { backgroundColor: note.color }]}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      onLongPress={handleLongPress}
+      delayLongPress={350}
+      activeOpacity={1}
+      onPress={undefined}
+    >
+      <View style={[styles.listAccentBar, { backgroundColor: accentColor }]} />
+      <View style={styles.listContent}>
+        <View style={styles.listTopRow}>
+          <Text style={styles.listTitle} numberOfLines={1}>{note.title}</Text>
+          <View style={styles.listMeta}>
+            {note.isPinned && <Ionicons name="pin" size={13} color={accentColor} />}
+            {note.isFavorite && <Ionicons name="heart" size={13} color="#EE4540" />}
+            <Text style={styles.listDate}>{formatDate(note.updatedAt)}</Text>
+          </View>
+        </View>
+        {previewText && <Text style={styles.listPreview} numberOfLines={2}>{previewText}</Text>}
+        {note.tags.length > 0 && (
+          <View style={styles.tagsRow}>
+            {note.tags.slice(0, 3).map((tag) => (
+              <View key={tag.id} style={[styles.tagBadge, { backgroundColor: tag.color + "22", borderColor: tag.color + "66" }]}>
+                <Text style={[styles.tagText, { color: tag.color }]}>{tag.label}</Text>
+              </View>
+            ))}
+            {note.tags.length > 3 && <Text style={styles.moreTagsText}>+{note.tags.length - 3}</Text>}
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+
+  // ── GRID card ───────────────────────────────────────────────────
+  const gridCard = renderCardInner(
+    <TouchableOpacity
+      style={[styles.gridCard, { backgroundColor: note.color }]}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      onLongPress={handleLongPress}
+      delayLongPress={350}
+      activeOpacity={1}
+      onPress={undefined}
+    >
+      <View style={styles.gridTopRow}>
+        <View style={[styles.gridAccentDot, { backgroundColor: accentColor }]} />
+        <View style={styles.gridIcons}>
+          {note.isPinned && <Ionicons name="pin" size={13} color={accentColor} />}
+          {note.isFavorite && <Ionicons name="heart" size={12} color="#EE4540" />}
+        </View>
+      </View>
+      <Text style={styles.gridTitle} numberOfLines={2}>{note.title}</Text>
+      {previewText && <Text style={styles.gridPreview} numberOfLines={3}>{previewText}</Text>}
+      <View style={{ flex: 1 }} />
+      <View style={styles.gridBottomRow}>
+        {note.tags.length > 0 ? (
+          <View style={[styles.tagBadge, { backgroundColor: note.tags[0].color + "22", borderColor: note.tags[0].color + "55" }]}>
+            <Text style={[styles.tagText, { color: note.tags[0].color }]}>{note.tags[0].label}</Text>
+          </View>
+        ) : <View />}
+        <Text style={styles.gridDate}>{formatDate(note.updatedAt)}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+
+  return (
     <>
       <QuickActionsModal
         note={note}
@@ -183,117 +305,37 @@ export function NoteCard({ note, viewMode, index, onPress }: Props) {
       />
 
       {viewMode === "list" ? (
-        <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-          <TouchableOpacity
-            style={[styles.listCard, { backgroundColor: note.color }]}
-            onPress={onPress}
-            onPressIn={onPressIn}
-            onPressOut={onPressOut}
-            onLongPress={handleLongPress}
-            delayLongPress={350}
-            activeOpacity={1}
-          >
-            <View style={[styles.listAccentBar, { backgroundColor: accentColor }]} />
-            <View style={styles.listContent}>
-              <View style={styles.listTopRow}>
-                <Text style={styles.listTitle} numberOfLines={1}>
-                  {note.title}
-                </Text>
-                <View style={styles.listMeta}>
-                  {note.isPinned && <Ionicons name="pin" size={13} color={accentColor} />}
-                  {note.isFavorite && <Ionicons name="heart" size={13} color="#EE4540" />}
-                  <Text style={styles.listDate}>{formatDate(note.updatedAt)}</Text>
-                </View>
-              </View>
-              {previewText && (
-                <Text style={styles.listPreview} numberOfLines={2}>{previewText}</Text>
-              )}
-              {note.tags.length > 0 && (
-                <View style={styles.tagsRow}>
-                  {note.tags.slice(0, 3).map((tag) => (
-                    <View key={tag.id} style={[styles.tagBadge, { backgroundColor: tag.color + "22", borderColor: tag.color + "66" }]}>
-                      <Text style={[styles.tagText, { color: tag.color }]}>{tag.label}</Text>
-                    </View>
-                  ))}
-                  {note.tags.length > 3 && (
-                    <Text style={styles.moreTagsText}>+{note.tags.length - 3}</Text>
-                  )}
-                </View>
-              )}
-            </View>
-          </TouchableOpacity>
-        </Animated.View>
+        <Swipeable
+          ref={swipeableRef}
+          renderRightActions={renderRightActions}
+          renderLeftActions={renderLeftActions}
+          onSwipeableOpen={handleSwipeOpen}
+          friction={2}
+          leftThreshold={60}
+          rightThreshold={60}
+          overshootLeft={false}
+          overshootRight={false}
+          containerStyle={styles.swipeContainer}
+        >
+          {listCard}
+        </Swipeable>
       ) : (
-        <Animated.View style={[styles.gridWrapper, { transform: [{ scale: scaleAnim }] }]}>
-          <TouchableOpacity
-            style={[styles.gridCard, { backgroundColor: note.color }]}
-            onPress={onPress}
-            onPressIn={onPressIn}
-            onPressOut={onPressOut}
-            onLongPress={handleLongPress}
-            delayLongPress={350}
-            activeOpacity={1}
-          >
-            <View style={styles.gridTopRow}>
-              <View style={[styles.gridAccentDot, { backgroundColor: accentColor }]} />
-              <View style={styles.gridIcons}>
-                {note.isPinned && <Ionicons name="pin" size={13} color={accentColor} />}
-                {note.isFavorite && <Ionicons name="heart" size={12} color="#EE4540" />}
-              </View>
-            </View>
-            <Text style={styles.gridTitle} numberOfLines={2}>{note.title}</Text>
-            {previewText && (
-              <Text style={styles.gridPreview} numberOfLines={3}>{previewText}</Text>
-            )}
-            <View style={{ flex: 1 }} />
-            <View style={styles.gridBottomRow}>
-              {note.tags.length > 0 ? (
-                <View style={[styles.tagBadge, { backgroundColor: note.tags[0].color + "22", borderColor: note.tags[0].color + "55" }]}>
-                  <Text style={[styles.tagText, { color: note.tags[0].color }]}>{note.tags[0].label}</Text>
-                </View>
-              ) : <View />}
-              <Text style={styles.gridDate}>{formatDate(note.updatedAt)}</Text>
-            </View>
-          </TouchableOpacity>
-        </Animated.View>
+        <Swipeable
+          ref={swipeableRef}
+          renderRightActions={renderRightActions}
+          onSwipeableOpen={handleSwipeOpen}
+          friction={2}
+          rightThreshold={60}
+          overshootRight={false}
+          containerStyle={[
+            styles.gridSwipeContainer,
+            index % 2 === 0 ? { marginRight: 4 } : { marginLeft: 4 },
+          ]}
+        >
+          {gridCard}
+        </Swipeable>
       )}
     </>
-  );
-
-  if (viewMode === "list") {
-    return (
-      <Swipeable
-        ref={swipeableRef}
-        renderRightActions={renderRightActions}
-        renderLeftActions={renderLeftActions}
-        onSwipeableOpen={handleSwipeOpen}
-        friction={2}
-        leftThreshold={60}
-        rightThreshold={60}
-        overshootLeft={false}
-        overshootRight={false}
-        containerStyle={styles.swipeContainer}
-      >
-        {cardContent}
-      </Swipeable>
-    );
-  }
-
-  return (
-    <Swipeable
-      ref={swipeableRef}
-      renderRightActions={renderRightActions}
-      onSwipeableOpen={handleSwipeOpen}
-      friction={2}
-      rightThreshold={60}
-      overshootRight={false}
-      containerStyle={[
-        styles.gridSwipeContainer,
-        index % 2 === 0 ? { marginRight: 4 } : { marginLeft: 4 },
-      ]}
-    >
-      {cardContent}
-    </Swipeable>
   );
 }
 
@@ -310,154 +352,42 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: "hidden",
   },
-  deleteAction: {
-    width: 90,
-    overflow: "hidden",
+  deleteAction: { width: 90, overflow: "hidden" },
+  deleteBtn: { flex: 1, backgroundColor: "#EE4540", alignItems: "center", justifyContent: "center", gap: 4 },
+  pinAction: { width: 90, overflow: "hidden" },
+  pinBtn: { flex: 1, backgroundColor: "#7C83FD", alignItems: "center", justifyContent: "center", gap: 4 },
+  actionBtnText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
+
+  // Floating heart
+  floatingHeart: {
+    position: "absolute",
+    alignSelf: "center",
+    top: "30%",
+    zIndex: 99,
   },
-  deleteBtn: {
-    flex: 1,
-    backgroundColor: "#EE4540",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-  },
-  deleteText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  pinAction: {
-    width: 90,
-    overflow: "hidden",
-  },
-  pinBtn: {
-    flex: 1,
-    backgroundColor: "#7C83FD",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-  },
-  pinText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  listCard: {
-    flexDirection: "row",
-    borderRadius: 16,
-    overflow: "hidden",
-    minHeight: 72,
-  },
-  listAccentBar: {
-    width: 3,
-    borderRadius: 2,
-    margin: 10,
-    marginRight: 0,
-  },
-  listContent: {
-    flex: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 5,
-  },
-  listTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  listTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#FFFFFF",
-    flex: 1,
-    letterSpacing: -0.2,
-  },
-  listMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  listDate: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.35)",
-    fontWeight: "500",
-  },
-  listPreview: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.55)",
-    lineHeight: 18,
-  },
-  tagsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 5,
-    marginTop: 2,
-    alignItems: "center",
-  },
-  tagBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
-  tagText: {
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  moreTagsText: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.35)",
-    fontWeight: "500",
-  },
-  gridWrapper: {
-    flex: 1,
-  },
-  gridCard: {
-    flex: 1,
-    borderRadius: 16,
-    padding: 14,
-    minHeight: 150,
-  },
-  gridTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  gridAccentDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  gridIcons: {
-    flexDirection: "row",
-    gap: 4,
-    alignItems: "center",
-  },
-  gridTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#FFFFFF",
-    letterSpacing: -0.2,
-    marginBottom: 6,
-    lineHeight: 20,
-  },
-  gridPreview: {
-    fontSize: 12,
-    color: "rgba(255,255,255,0.5)",
-    lineHeight: 17,
-    marginBottom: 8,
-  },
-  gridBottomRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 8,
-  },
-  gridDate: {
-    fontSize: 10,
-    color: "rgba(255,255,255,0.3)",
-    fontWeight: "500",
-  },
+
+  // LIST
+  listCard: { flexDirection: "row", borderRadius: 16, overflow: "hidden", minHeight: 72 },
+  listAccentBar: { width: 3, borderRadius: 2, margin: 10, marginRight: 0 },
+  listContent: { flex: 1, paddingHorizontal: 14, paddingVertical: 12, gap: 5 },
+  listTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  listTitle: { fontSize: 15, fontWeight: "700", color: "#FFFFFF", flex: 1, letterSpacing: -0.2 },
+  listMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
+  listDate: { fontSize: 11, color: "rgba(255,255,255,0.35)", fontWeight: "500" },
+  listPreview: { fontSize: 13, color: "rgba(255,255,255,0.55)", lineHeight: 18 },
+  tagsRow: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 2, alignItems: "center" },
+  tagBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, borderWidth: 1 },
+  tagText: { fontSize: 11, fontWeight: "600" },
+  moreTagsText: { fontSize: 11, color: "rgba(255,255,255,0.35)", fontWeight: "500" },
+
+  // GRID
+  gridWrapper: { flex: 1 },
+  gridCard: { flex: 1, borderRadius: 16, padding: 14, minHeight: 150 },
+  gridTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+  gridAccentDot: { width: 8, height: 8, borderRadius: 4 },
+  gridIcons: { flexDirection: "row", gap: 4, alignItems: "center" },
+  gridTitle: { fontSize: 15, fontWeight: "700", color: "#FFFFFF", letterSpacing: -0.2, marginBottom: 6, lineHeight: 20 },
+  gridPreview: { fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 17, marginBottom: 8 },
+  gridBottomRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 },
+  gridDate: { fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: "500" },
 });
