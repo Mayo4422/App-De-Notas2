@@ -28,6 +28,7 @@ type Action =
   | { type: "DELETE_NOTE"; payload: string }
   | { type: "TOGGLE_PIN"; payload: string }
   | { type: "TOGGLE_FAVORITE"; payload: string }
+  | { type: "REORDER_NOTES"; payload: Note[] }
   | { type: "SET_VIEW_MODE"; payload: ViewMode }
   | { type: "SET_SORT"; payload: SortOption }
   | { type: "SET_SEARCH"; payload: string }
@@ -63,6 +64,8 @@ function reducer(state: State, action: Action): State {
           n.id === action.payload ? { ...n, isFavorite: !n.isFavorite } : n
         ),
       };
+    case "REORDER_NOTES":
+      return { ...state, notes: action.payload };
     case "SET_VIEW_MODE":
       return { ...state, viewMode: action.payload };
     case "SET_SORT":
@@ -99,6 +102,7 @@ type ContextType = State & {
   deleteNote: (id: string) => Promise<void>;
   togglePin: (id: string) => void;
   toggleFavorite: (id: string) => void;
+  reorderNotes: (notes: Note[]) => void;
   setViewMode: (mode: ViewMode) => void;
   setSortBy: (sort: SortOption) => void;
   setSearchQuery: (q: string) => void;
@@ -120,7 +124,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         ]);
         if (raw) {
           const parsed: Note[] = JSON.parse(raw);
-          // Migrar notas viejas sin campo images
           const migrated = parsed.map((n) => ({ images: [], ...n }));
           dispatch({ type: "LOAD_NOTES", payload: migrated });
         } else {
@@ -161,27 +164,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const now = new Date().toISOString();
       const note: Note = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        title,
-        content,
-        color,
-        tags,
-        images,
-        isPinned: false,
-        isFavorite: false,
-        createdAt: now,
-        updatedAt: now,
+        title, content, color, tags, images,
+        isPinned: false, isFavorite: false,
+        createdAt: now, updatedAt: now,
       };
       dispatch({ type: "ADD_NOTE", payload: note });
       return note;
-    },
-    []
+    }, []
   );
 
   const updateNote = useCallback(async (note: Note) => {
-    dispatch({
-      type: "UPDATE_NOTE",
-      payload: { ...note, updatedAt: new Date().toISOString() },
-    });
+    dispatch({ type: "UPDATE_NOTE", payload: { ...note, updatedAt: new Date().toISOString() } });
   }, []);
 
   const deleteNote = useCallback(async (id: string) => {
@@ -194,6 +187,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const toggleFavorite = useCallback((id: string) => {
     dispatch({ type: "TOGGLE_FAVORITE", payload: id });
+  }, []);
+
+  const reorderNotes = useCallback((notes: Note[]) => {
+    dispatch({ type: "REORDER_NOTES", payload: notes });
   }, []);
 
   const setViewMode = useCallback((mode: ViewMode) => {
@@ -228,15 +225,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         n.tags.some((t) => t.id === state.activeTagFilter)
       );
     }
-    result.sort((a, b) => {
-      if (a.isPinned && !b.isPinned) return -1;
-      if (!a.isPinned && b.isPinned) return 1;
-      switch (state.sortBy) {
-        case "title": return a.title.localeCompare(b.title);
-        case "createdAt": return b.createdAt.localeCompare(a.createdAt);
-        default: return b.updatedAt.localeCompare(a.updatedAt);
-      }
-    });
+    // Solo aplicar sort automático si no estamos en modo reorder manual
+    if (state.searchQuery || state.activeTagFilter) {
+      result.sort((a, b) => {
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        switch (state.sortBy) {
+          case "title": return a.title.localeCompare(b.title);
+          case "createdAt": return b.createdAt.localeCompare(a.createdAt);
+          default: return b.updatedAt.localeCompare(a.updatedAt);
+        }
+      });
+    }
     return result;
   }, [state.notes, state.searchQuery, state.activeTagFilter, state.sortBy]);
 
@@ -244,15 +244,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     <NotesContext.Provider
       value={{
         ...state,
-        addNote,
-        updateNote,
-        deleteNote,
-        togglePin,
-        toggleFavorite,
-        setViewMode,
-        setSortBy,
-        setSearchQuery,
-        setTagFilter,
+        addNote, updateNote, deleteNote,
+        togglePin, toggleFavorite, reorderNotes,
+        setViewMode, setSortBy, setSearchQuery, setTagFilter,
         filteredNotes,
       }}
     >
