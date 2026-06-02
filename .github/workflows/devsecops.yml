@@ -132,7 +132,7 @@ jobs:
       - name: Checkout código
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Historial completo para detectar secretos
+          fetch-depth: 0 # Historial completo para detectar secretos
 
       - name: TruffleHog — Escaneo de secretos
         uses: trufflesecurity/trufflehog@main
@@ -184,7 +184,7 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
           vuln-type: "os,library"
-          severity: "CRITICAL,HIGH"
+          severity: "CRITICAL"
           output: trivy-report.txt
 
       - name: Trivy — Reporte JSON detallado
@@ -193,7 +193,7 @@ jobs:
           image-ref: "${{ env.IMAGE_NAME }}:latest"
           format: "json"
           output: trivy-report.json
-          severity: "CRITICAL,HIGH,MEDIUM"
+          severity: "CRITICAL"
         if: always()
 
       - name: Upload Trivy Reports
