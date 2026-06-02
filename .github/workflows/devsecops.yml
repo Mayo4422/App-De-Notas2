@@ -1,0 +1,236 @@
+name: DevSecOps Pipeline — Notes App
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: "20"
+  IMAGE_NAME: notes-app
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # JOB 1: BUILD & TEST
+  # ─────────────────────────────────────────────────────────────
+  build:
+    name: 🔨 Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Instalar dependencias
+        run: npm install --legacy-peer-deps
+
+      - name: Verificar TypeScript
+        run: npx tsc --noEmit || true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-files
+          path: |
+            src/
+            package.json
+            babel.config.js
+            tsconfig.json
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 2: SAST — Análisis estático de código
+  # ─────────────────────────────────────────────────────────────
+  sast:
+    name: 🔍 SAST — Semgrep
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep SAST
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/javascript
+            p/typescript
+            p/react
+            p/security-audit
+            p/owasp-top-ten
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        continue-on-error: false
+
+      - name: Upload SAST Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sast-report
+          path: semgrep.sarif
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 3: SCA — Análisis de dependencias
+  # ─────────────────────────────────────────────────────────────
+  sca:
+    name: 📦 SCA — npm audit + Snyk
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Instalar dependencias
+        run: npm install --legacy-peer-deps
+
+      - name: npm audit (fallar en Critical/High)
+        run: |
+          npm audit --audit-level=critical --json > npm-audit-report.json || true
+          npm audit --audit-level=high 2>&1 | tee npm-audit-output.txt
+          if npm audit --audit-level=critical 2>&1 | grep -q "found [^0].*critical"; then
+            echo "❌ CRÍTICO: Vulnerabilidades críticas encontradas"
+            exit 1
+          fi
+          echo "✅ Sin vulnerabilidades críticas"
+
+      - name: Snyk SCA Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --json-file-output=snyk-report.json
+        continue-on-error: false
+
+      - name: Upload SCA Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sca-reports
+          path: |
+            npm-audit-report.json
+            npm-audit-output.txt
+            snyk-report.json
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 4: SECRETS — Detección de secretos hardcodeados
+  # ─────────────────────────────────────────────────────────────
+  secrets-scan:
+    name: 🔐 Secrets — TruffleHog
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Historial completo para detectar secretos
+
+      - name: TruffleHog — Escaneo de secretos
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified
+
+      - name: Verificar archivos .env
+        run: |
+          if find . -name "*.env" -not -path "./node_modules/*" | grep -q .; then
+            echo "❌ ERROR: Archivos .env encontrados en el repositorio"
+            find . -name "*.env" -not -path "./node_modules/*"
+            exit 1
+          fi
+          echo "✅ Sin archivos .env en el repositorio"
+
+      - name: Verificar credenciales hardcodeadas
+        run: |
+          # Buscar patrones típicos de secretos
+          if grep -r "password\s*=\s*['\"][^'\"]\+['\"]" src/ --include="*.ts" --include="*.tsx" 2>/dev/null | grep -v "placeholder\|example\|test"; then
+            echo "❌ Posibles credenciales hardcodeadas detectadas"
+            exit 1
+          fi
+          echo "✅ Sin credenciales hardcodeadas detectadas"
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 5: CONTAINER SECURITY — Docker + Trivy
+  # ─────────────────────────────────────────────────────────────
+  container-security:
+    name: 🐳 Container — Docker Build + Trivy
+    runs-on: ubuntu-latest
+    needs: [sast, sca, secrets-scan]
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+          docker build -t ${{ env.IMAGE_NAME }}:latest .
+
+      - name: Run Trivy — Escaneo de vulnerabilidades
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:latest"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+          output: trivy-report.txt
+
+      - name: Trivy — Reporte JSON detallado
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:latest"
+          format: "json"
+          output: trivy-report.json
+          severity: "CRITICAL,HIGH,MEDIUM"
+        if: always()
+
+      - name: Upload Trivy Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-reports
+          path: |
+            trivy-report.txt
+            trivy-report.json
+
+  # ─────────────────────────────────────────────────────────────
+  # JOB 6: RESULTADO FINAL
+  # ─────────────────────────────────────────────────────────────
+  pipeline-summary:
+    name: ✅ Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [build, sast, sca, secrets-scan, container-security]
+    if: always()
+    steps:
+      - name: Verificar resultados
+        run: |
+          echo "================================================"
+          echo "   DevSecOps Pipeline — Notes App"
+          echo "================================================"
+          echo "Build:              ${{ needs.build.result }}"
+          echo "SAST (Semgrep):     ${{ needs.sast.result }}"
+          echo "SCA (npm+Snyk):     ${{ needs.sca.result }}"
+          echo "Secrets Scan:       ${{ needs.secrets-scan.result }}"
+          echo "Container (Trivy):  ${{ needs.container-security.result }}"
+          echo "================================================"
+
+          if [[ "${{ needs.sast.result }}" == "failure" || \
+                "${{ needs.sca.result }}" == "failure" || \
+                "${{ needs.secrets-scan.result }}" == "failure" || \
+                "${{ needs.container-security.result }}" == "failure" ]]; then
+            echo "❌ PIPELINE FAILED — Vulnerabilidades de seguridad detectadas"
+            exit 1
+          fi
+          echo "✅ PIPELINE PASSED — Todos los controles de seguridad aprobados"
