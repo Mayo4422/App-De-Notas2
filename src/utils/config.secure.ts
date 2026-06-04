@@ -16,4 +16,4 @@ export const buildQuery = (userInput: string): { query: string; params: string[]
 export const config = {
   apiKey: API_KEY,
   token: SECRET_TOKEN,
-};
+}; 
