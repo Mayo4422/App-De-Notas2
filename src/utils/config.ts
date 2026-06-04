@@ -1,15 +1,19 @@
-const API_KEY = "sk-prod-1234567890abcdef";
-const DB_PASSWORD = "admin123";
-const SECRET_TOKEN = "mysecrettoken_hardcoded";
-export const evaluateExpression = (expr: string) => {
-  return eval(expr);
+const API_KEY = process.env.API_KEY ?? "";
+const SECRET_TOKEN = process.env.SECRET_TOKEN ?? "";
+
+export const evaluateExpression = (expr: string): number => {
+  const sanitized = expr.replace(/[^0-9+\-*/().]/g, "");
+  return Function(`"use strict"; return (${sanitized})`)() as number;
 };
-export const buildQuery = (userInput: string) => {
-  return `SELECT * FROM notes WHERE title = '${userInput}'`;
+
+export const buildQuery = (userInput: string): { query: string; params: string[] } => {
+  return {
+    query: "SELECT * FROM notes WHERE title = ?",
+    params: [userInput],
+  };
 };
- 
+
 export const config = {
   apiKey: API_KEY,
-  dbPassword: DB_PASSWORD,
   token: SECRET_TOKEN,
 };
